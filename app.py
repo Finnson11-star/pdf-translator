@@ -4,70 +4,93 @@ from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import time
 
-# Functie om de vertaalde tekst om te zetten naar een PDF-bestand
+# --- 1. Functie voor PDF generatie ---
 def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # We gebruiken Helvetica, een standaard font dat bijna altijd werkt
     pdf.set_font("helvetica", size=10)
     
-    for line in text.split('\n'):
-        # Filter vreemde tekens die FPDF niet begrijpt
-        clean_line = line.encode('latin-1', 'ignore').decode('latin-1')
-        pdf.multi_cell(0, 8, txt=clean_line)
+    # Belangrijk: we filteren de tekst zodat FPDF niet vastloopt op vreemde tekens
+    # 'latin-1' is de standaard voor FPDF; 'replace' vervangt onbekende tekens door ?
+    safe_text = text.encode('latin-1', 'replace').decode('latin-1')
+    
+    for line in safe_text.split('\n'):
+        if line.strip() == "":
+            pdf.ln(5) # Voeg een witregel toe
+        else:
+            # multi_cell zorgt voor tekstomloop binnen de marges
+            pdf.multi_cell(0, 8, txt=line)
+    
     return pdf.output()
 
-# --- Streamlit Interface ---
-st.set_page_config(page_title="Gratis PDF Vertaler", layout="wide")
-st.title("🌍 PDF Vertaler (Onbeperkt aantal pagina's)")
-st.info("Deze app vertaalt pagina voor pagina om blokkades te voorkomen. Even geduld bij grote bestanden!")
+# --- 2. Streamlit Interface ---
+st.set_page_config(page_title="Gratis PDF Vertaler", layout="centered")
+st.title("🌍 PDF Vertaler (Grote Bestanden)")
+st.markdown("Vertaalt je PDF pagina voor pagina om blokkades te voorkomen.")
 
-uploaded_file = st.file_uploader("Upload je PDF bestand", type="pdf")
-target_lang = st.sidebar.selectbox("Vertaal naar taal:", ["nl", "en", "de", "fr", "es", "it"])
+uploaded_file = st.file_uploader("Upload je PDF", type="pdf")
+target_lang = st.sidebar.selectbox("Vertaal naar:", ["nl", "en", "de", "fr", "es", "it"])
 
 if uploaded_file is not None:
-    if st.button("Start de Vertaling"):
+    if st.button("Start Vertaling"):
         vertaalde_tekst = ""
         
         with pdfplumber.open(uploaded_file) as pdf:
             totaal_paginas = len(pdf.pages)
             progress_bar = st.progress(0)
             status_tekst = st.empty()
-            preview_tekst = st.empty() # Plek voor de live preview
+            preview_box = st.empty()
 
             for i, pagina in enumerate(pdf.pages):
-                tekst = pagina.extract_text()
+                tekst_origineel = pagina.extract_text()
                 
-                if tekst:
+                if tekst_origineel:
                     try:
-                        # Vertaling uitvoeren per pagina
-                        vertaling = GoogleTranslator(source='auto', target=target_lang).translate(tekst)
+                        # Vertalen
+                        vertaling = GoogleTranslator(source='auto', target=target_lang).translate(tekst_origineel)
                         vertaalde_tekst += f"--- Pagina {i+1} ---\n{vertaling}\n\n"
                         
-                        # Laat de gebruiker zien wat er gebeurt
-                        with preview_tekst.container():
-                            st.write(f"**Laatst vertaalde pagina ({i+1}):**")
-                            st.text(vertaling[:500] + "...") # Toon eerste 500 tekens
+                        # Live preview tonen
+                        with preview_box.container():
+                            st.write(f"✅ Pagina {i+1} vertaald...")
                             
                     except Exception as e:
-                        st.error(f"Google pauzeert de verbinding op pagina {i+1}. Download wat tot nu toe klaar is.")
+                        st.error(f"Google heeft de verbinding gepauzeerd op pagina {i+1}. Je kunt downloaden wat er tot nu toe is.")
                         break
                 
-                # Update voortgangsbalk
+                # Voortgangsbalk updaten
                 voortgang = (i + 1) / totaal_paginas
                 progress_bar.progress(voortgang)
-                status_tekst.text(f"Bezig met pagina {i+1} van {totaal_paginas}...")
+                status_tekst.text(f"Bezig met pagina {i+1} van {totaal_paginas}")
                 
-                # Pauze van 1.5 seconde om 'bot-detectie' te omzeilen
+                # Korte pauze tegen bot-detectie
                 time.sleep(1.5)
 
-        st.success("Vertaling is voltooid!")
+        st.success("Klaar!")
 
-        # Download sectie
-        pdf_output = create_pdf(vertaalde_tekst)
-        st.download_button(
-            label="📥 Download Vertaalde PDF",
-            data=bytes(pdf_output),
-            file_name="vertaald_document.pdf",
-            mime="application/pdf"
-        )
+        # --- 3. Download Sectie ---
+        if vertaalde_tekst:
+            try:
+                # Genereer PDF bytes
+                pdf_bytes = create_pdf(vertaalde_tekst)
+                
+                st.download_button(
+                    label="📥 Download Vertaalde PDF",
+                    data=pdf_bytes,
+                    file_name="vertaald_document.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.warning("De PDF kon niet worden gegenereerd door speciale tekens. Gebruik de tekst-optie hieronder.")
+                st.error(f"Details: {e}")
+
+            # Altijd een tekst-reserve optie bieden
+            st.download_button(
+                label="📄 Download als Tekstbestand (.txt)",
+                data=vertaalde_tekst,
+                file_name="vertaling.txt",
+                mime="text/plain"
+            )
